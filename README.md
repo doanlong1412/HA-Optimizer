@@ -1,13 +1,5 @@
 # 🧹 HA Optimizer
 
-
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![version](https://img.shields.io/badge/version-1.0.0-blue)
-![HA](https://img.shields.io/badge/Home%20Assistant-2023.1+-green)
-![license](https://img.shields.io/badge/license-MIT-lightgrey)
-![Python](https://img.shields.io/badge/Python-3.11+-yellow)
-![languages](https://img.shields.io/badge/UI-12%20languages-blueviolet)
-![themes](https://img.shields.io/badge/themes-11%20built--in-ff69b4)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 ![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![HA](https://img.shields.io/badge/Home%20Assistant-2023.1+-green)
