@@ -145,6 +145,11 @@ The entire panel UI — every label, button, message, and error — is fully tra
 
 ### Method 1: HACS (Recommended)
 
+**Step 1** — Add this repository to HACS:
+
+[![Open HACS Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=doanlong1412&repository=HA-Optimizer&category=integration)
+
+> If the button doesn't work, add manually:
 1. Open HACS → **Integrations** → click the **⋮** menu → **Custom repositories**
 2. Add this repository URL and select category **Integration**
 3. Find **HA Optimizer** in the HACS store and click **Download**
