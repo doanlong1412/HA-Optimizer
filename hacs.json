@@ -1,0 +1,8 @@
+{
+  "name": "HA Optimizer",
+  "description": "Smart cleanup, analysis and health-check integration for Home Assistant. Scan, analyze and purge unused entities, automations, scripts and helpers.",
+  "render_readme": true,
+  "homeassistant": "2023.1.0",
+  "country": [],
+  "iot_class": "local_polling"
+}
