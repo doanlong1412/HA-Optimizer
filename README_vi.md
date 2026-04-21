@@ -5,6 +5,8 @@
 ![HA](https://img.shields.io/badge/Home%20Assistant-2023.1+-green)
 ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Python](https://img.shields.io/badge/Python-3.11+-yellow)
+![languages](https://img.shields.io/badge/UI-12%20ngôn%20ngữ-blueviolet)
+![themes](https://img.shields.io/badge/themes-11%20built--in-ff69b4)
 
 > 🇬🇧 **English version:** [README.md](README.md)
 
@@ -136,7 +138,6 @@ Toàn bộ panel — mọi nhãn, nút, thông báo và lỗi — đều đượ
 **Hỗ trợ:** 🇻🇳 Tiếng Việt · 🇬🇧 English · 🇩🇪 Deutsch · 🇫🇷 Français · 🇳🇱 Nederlands · 🇵🇱 Polski · 🇸🇪 Svenska · 🇭🇺 Magyar · 🇨🇿 Čeština · 🇮🇹 Italiano · 🇵🇹 Português · 🇸🇮 Slovenščina
 
 ---
-
 ## 🛠️ Cài Đặt
 
 ### Cách 1: HACS (Khuyến nghị)
@@ -192,32 +193,11 @@ Tất cả settings có thể thay đổi qua **Settings → Devices & Services 
 
 ---
 
-## 🔑 Lấy Access Token
-
-Panel cần một **Long-Lived Access Token** để gọi HA services. Bạn chỉ cần làm việc này **một lần duy nhất** — token được lưu tự động trong trình duyệt.
-
-**Bước 1 — Tạo token trong Home Assistant:**
-
-1. Nhấn vào tên/avatar của bạn ở **góc dưới bên trái** Home Assistant
-2. Cuộn xuống tận cùng trang đến mục **"Long-Lived Access Tokens"**
-3. Nhấn **"Create Token"**, đặt tên bất kỳ (ví dụ: `HA Optimizer`)
-4. **Copy token ngay lập tức** — token sẽ không hiện lại sau khi bạn đóng hộp thoại
-
-**Bước 2 — Nhập token vào panel:**
-
-1. Mở panel **🧹 HA Optimizer** từ sidebar HA
-2. Nhấn nút **🔑 Token** ở góc trên bên phải của panel
-3. Dán token vào ô text
-4. Nhấn **💾 Lưu Token**
-5. Chấm tròn cạnh chữ "Token" chuyển sang **màu xanh** → đã kết nối ✅
-
-> 💡 Token được lưu vào localStorage của trình duyệt — chỉ nhập một lần. Nếu token hết hạn hoặc muốn đổi tài khoản, nhấn **🗑️ Xóa** trong menu Token rồi tạo token mới.
-
----
-
 ## 🚀 Cách Dùng
 
-Sau khi nhập token, mở panel **🧹 HA Optimizer** từ sidebar. Mọi thao tác đều thực hiện qua giao diện — không cần YAML hay gọi service thủ công.
+Mở panel **🧹 HA Optimizer** từ sidebar HA. Panel tự động kết nối qua phiên WebSocket của HA — **không cần token hay xác thực thêm**. Mọi thao tác đều thực hiện qua giao diện — không cần YAML hay gọi service thủ công.
+
+> ✅ **Không cần Long-Lived Access Token.** Panel dùng chính kết nối đã xác thực sẵn của trình duyệt với Home Assistant — không lưu trữ, không chia sẻ bất kỳ token nào.
 
 Panel có **9 tab** ở trên cùng:
 
@@ -304,9 +284,17 @@ So sánh hành vi HA hôm nay với **lịch sử baseline của chính bạn** 
 
 ---
 
-### 🫆 Tab Fingerprint
+### 🧩 Tab Add-ons
 
-###Danh sách add-on + CPU/RAM trực tiếp + dữ liệu tài nguyên host
+Panel quản lý add-on đầy đủ kèm dữ liệu tài nguyên host trực tiếp.
+
+- Liệt kê toàn bộ add-on với trạng thái, phiên bản và thông tin cập nhật
+- **CPU % và RAM** trực tiếp của từng add-on đang chạy, tự làm mới mỗi 5 giây
+- **Biểu đồ hệ thống** ở trên đầu luôn hiển thị CPU / RAM / Disk của host
+- **Cập nhật / Khởi động / Dừng** chỉ một click mà không cần rời panel
+
+> ℹ️ Yêu cầu Home Assistant OS hoặc Supervised (Supervisor API). Không khả dụng trên bản Container hoặc Core.
+
 ---
 
 ### 🗑️ Tab Thùng Rác
@@ -370,6 +358,7 @@ automation:
 - **Device class an toàn được hardcode** — cảm biến khói, CO/gas, độ ẩm, chuyển động, chiếm dụng, cửa, cửa sổ, khóa, rung, âm thanh, pin, sự cố **không bao giờ** được gợi ý.
 - **Entity YAML được gắn cờ, không bao giờ tự xóa** — cần thao tác thủ công.
 - **Chấm điểm rủi ro** — mỗi kết quả có mức độ rủi ro để bạn quyết định có thông tin.
+- **Không lưu trữ token** — panel xác thực qua WebSocket session sẵn có của HA, không có thông tin nhạy cảm nào được lưu trong trình duyệt.
 
 ---
 
@@ -377,11 +366,13 @@ automation:
 
 | | |
 |---|---|
-| Home Assistant | 2023.1+ |
+| Home Assistant | 2023.7+ (2023.1+ cho hầu hết tính năng) |
 | Database | SQLite (mặc định) và MySQL/MariaDB |
 | Cấu hình | UI config flow — không cần YAML |
 | Phụ thuộc | Không — chỉ dùng HA built-ins |
 | Python | 3.11+ |
+
+> **Tại sao 2023.7+?** Panel dùng `return_response` khi gọi service (ra mắt từ HA 2023.7). Các tính năng còn lại hoạt động từ 2023.1+.
 
 ---
 
@@ -401,7 +392,7 @@ automation:
 - 🎨 11 theme tích hợp, lưu tự động
 - 🌍 12 ngôn ngữ giao diện, dịch đầy đủ
 - ⚙️ Config flow UI đầy đủ với options
-
+- 🔐 **Không cần Long-Lived Access Token** — xác thực qua WebSocket session của HA
 
 ---
 

@@ -26,7 +26,6 @@ Most Home Assistant instances accumulate hundreds of dead entities, broken autom
 
 ---
 
-
 ## 🔥 Why You Need This
 
 | Problem | HA Optimizer |
@@ -140,11 +139,9 @@ The entire panel UI — every label, button, message, and error — is fully tra
 
 ---
 
-
 ## 🛠️ Installation
 
 ### Method 1: HACS (Recommended)
-
 **Step 1** — Add this repository to HACS:
 
 [![Open HACS Repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=doanlong1412&repository=HA-Optimizer&category=integration)
@@ -198,32 +195,11 @@ All settings can be changed at any time via **Settings → Devices & Services �
 
 ---
 
-## 🔑 Getting Your Access Token
-
-The panel needs a **Long-Lived Access Token** to call HA services. You only need to do this **once** — the token is saved in your browser automatically.
-
-**Step 1 — Create the token in Home Assistant:**
-
-1. Click your username/avatar in the **bottom-left** of Home Assistant
-2. Scroll all the way down to **"Long-Lived Access Tokens"**
-3. Click **"Create Token"**, give it any name (e.g. `HA Optimizer`)
-4. **Copy the token immediately** — it will not be shown again after you close the dialog
-
-**Step 2 — Enter the token in the panel:**
-
-1. Open the **🧹 HA Optimizer** panel from the HA sidebar
-2. Click the **🔑 Token** button in the top-right corner of the panel
-3. Paste your token into the text box
-4. Click **💾 Save Token**
-5. The dot next to "Token" turns **green** → you're connected ✅
-
-> 💡 The token is stored in your browser's localStorage — you only enter it once. If it expires or you switch accounts, click **🗑️ Clear** inside the Token menu and create a new one.
-
----
-
 ## 🚀 Using the Panel
 
-After entering your token, open the **🧹 HA Optimizer** panel from the sidebar. Everything is done through the UI — no YAML or manual service calls required.
+Open the **🧹 HA Optimizer** panel from the HA sidebar. The panel connects automatically using the HA WebSocket session — **no token or extra authentication required**. Everything is done through the UI — no YAML or manual service calls needed.
+
+> ✅ **No Long-Lived Access Token needed.** The panel uses Home Assistant's own authenticated connection, the same one your browser already has open.
 
 The panel has **9 tabs** across the top:
 
@@ -310,6 +286,19 @@ Compares today's HA behaviour against your **own** historical baseline — priva
 
 ---
 
+### 🧩 Add-ons Tab
+
+Full add-on control panel with live host resource data.
+
+- Lists all add-ons with status, version, and update availability
+- Live **CPU % and RAM** per running add-on, auto-refreshing every 5 seconds
+- **System gauges** at the top always show host CPU / RAM / Disk
+- One-click **Update / Start / Stop** without leaving the panel
+
+> ℹ️ Requires Home Assistant OS or Supervised (Supervisor API). Not available on Container or Core installs.
+
+---
+
 ### 🗑️ Trash Tab
 
 All soft-deleted entities appear here with the date they were disabled.
@@ -317,20 +306,6 @@ All soft-deleted entities appear here with the date they were disabled.
 - **♻️ Restore** — re-enables the entity and removes it from trash
 - **❌ Hard Delete** — permanently removes from HA
 - Entities are auto-hard-deleted after the configured number of days (default: 7)
-
----
-
-
-### 🫆 Add-on status Tab
-# Add-on status + host resource data
----
-
-## 🛡️ Safety
-
-- **Soft delete is the default** — entities are disabled, not removed. Fully reversible.
-- **Safety device classes are hardcoded** — smoke, CO/gas, moisture, motion, occupancy, door, window, lock, vibration, sound, battery, problem sensors are **never** suggested.
-- **YAML entities are flagged, never auto-deleted** — they require manual action.
-- **Risk scoring** — every result has a risk level so you make informed decisions.
 
 ---
 
@@ -378,20 +353,31 @@ automation:
 | `ha_optimizer.collect_baseline` | Manual baseline snapshot collection |
 
 ---
+
+## 🛡️ Safety
+
+- **Soft delete is the default** — entities are disabled, not removed. Fully reversible.
+- **Safety device classes are hardcoded** — smoke, CO/gas, moisture, motion, occupancy, door, window, lock, vibration, sound, battery, problem sensors are **never** suggested.
+- **YAML entities are flagged, never auto-deleted** — they require manual action.
+- **Risk scoring** — every result has a risk level so you make informed decisions.
+
+---
+
 ## 🖥️ Compatibility
 
 | | |
 |---|---|
-| Home Assistant | 2023.1+ |
+| Home Assistant | 2023.7+ (2023.1+ for most features) |
 | Database | SQLite (default) and MySQL/MariaDB |
 | Config | UI config flow — no YAML required |
 | Dependencies | None — uses only HA built-ins |
 | Python | 3.11+ |
 
+> **Why 2023.7+?** The panel uses `return_response` on service calls (introduced in HA 2023.7). All other features work on 2023.1+.
+
 ---
 
 ## 📋 Changelog
-
 
 ### v1.0.0 — Initial Release
 - 🔍 Smart entity scanner with risk levels and health score
@@ -407,6 +393,7 @@ automation:
 - 🎨 11 built-in themes, saved per session
 - 🌍 12 UI languages, fully translated
 - ⚙️ Full UI config flow with options
+- 🔐 **No Long-Lived Access Token required** — panel authenticates via HA WebSocket session
 
 ---
 
