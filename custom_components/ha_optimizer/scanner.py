@@ -111,14 +111,21 @@ class DataScanner:
         # Gather references from YAML and dashboards
         references = await self.hass.async_add_executor_job(self._scan_references)
 
-        # Gather state history (last_changed) via SQL
+        # Gather state history via SQL — returns {entity_id: {last_any, last_valid}}
         history_map = await self._get_history_map()
+
+        # Build active config entry IDs for O(1) dead-entry detection (Method 2)
+        active_entry_ids: set[str] = {
+            e.entry_id for e in self.hass.config_entries.async_entries()
+        }
 
         results: list[ScanResult] = []
 
         for entry in ent_reg.entities.values():
             try:
-                result = self._analyze_entity(entry, dev_reg, references, history_map)
+                result = self._analyze_entity(
+                    entry, dev_reg, references, history_map, active_entry_ids
+                )
                 if result:
                     results.append(result)
             except Exception as exc:
@@ -157,96 +164,156 @@ class DataScanner:
             },
         }
 
+    # Platforms that are naturally often unavailable — not orphans
+    _SKIP_UNAVAILABLE_PLATFORMS = {
+        "template", "group", "universal", "input_boolean",
+        "input_number", "input_select", "input_text", "input_datetime",
+        "counter", "timer", "schedule",
+    }
+
     def _analyze_entity(
         self,
         entry: er.RegistryEntry,
         dev_reg: dr.DeviceRegistry,
         references: dict,
         history_map: dict,
+        active_entry_ids: set,
     ) -> ScanResult | None:
-        """Analyze a single entity registry entry."""
-        entity_id = entry.entity_id
-        domain = entity_id.split(".")[0]
-        reasons = []
-        risk = RISK_MEDIUM
+        """Analyze a single entity — 4-method detection from Orphan Entity Cleaner.
 
-        # Skip system/internal entities
-        if domain in ("persistent_notification", "group") and not entry.platform:
+        Method 1 — orphaned_timestamp : official HA field set after restart
+        Method 2 — dead_config_entry  : config_entry_id points to removed integration
+        Method 3 — unavailable_state  : state=unavailable for >= stale_days
+                                        uses entry.modified_at (survives restarts),
+                                        NOT state.last_changed (resets on restart)
+        Method 4 — stale_recorder     : last VALID (non-unavailable) state in recorder
+                                        is older than stale_days threshold
+        """
+        entity_id = entry.entity_id
+        domain    = entity_id.split(".")[0]
+        platform  = entry.platform or ""
+        reasons   = []
+        risk      = RISK_MEDIUM
+        last_changed_dt = None  # best datetime to show in UI
+
+        # ── Skip system/internal domains ─────────────────────────────
+        if domain in ("persistent_notification",) and not platform:
             return None
 
-        # Check device class safety
+        # ── Skip safety device classes (smoke, motion, lock, etc.) ───
         device_class = entry.original_device_class or entry.device_class
         if device_class and device_class.lower() in self.excluded_classes:
-            return None  # Never suggest safety devices
+            return None
 
-        # Determine category
+        # ── Determine category ────────────────────────────────────────
         category = CAT_HELPER if domain in HELPER_DOMAINS else CAT_ENTITY
 
-        # Check orphaned (config entry removed)
-        is_orphaned = False
-        if entry.config_entry_id:
-            config_entry = self.hass.config_entries.async_get_entry(entry.config_entry_id)
-            if config_entry is None:
-                is_orphaned = True
-                reasons.append("Orphaned: config entry no longer exists")
+        # ── Method 1: orphaned_timestamp (official HA field) ─────────
+        orphaned_ts = getattr(entry, "orphaned_timestamp", None)
+        if orphaned_ts is not None:
+            import time as _time
+            age_h = (_time.time() - orphaned_ts) / 3600
+            age_d = int(age_h / 24)
+            if age_h >= 24:
+                reasons.append(f"Orphaned by HA for {age_d} days (official)")
+                risk = RISK_LOW
+                last_changed_dt = datetime.utcfromtimestamp(orphaned_ts).replace(
+                    tzinfo=dt_util.UTC
+                )
+
+        # ── Method 2: dead config entry ──────────────────────────────
+        is_dead_entry = False
+        if not reasons and entry.config_entry_id:
+            if entry.config_entry_id not in active_entry_ids:
+                is_dead_entry = True
+                reasons.append("Integration removed (config entry gone)")
                 risk = RISK_LOW
 
-        # ── Resolve last_changed via 3-tier fallback (inspired by Orphan Cleaner) ──
-        # Tier 1: Recorder DB — most accurate, covers all historical data
-        last_changed = history_map.get(entity_id)
+        # ── Method 3: unavailable state (Orphan Cleaner key insight) ─
+        # Uses entry.modified_at from the registry — this survives HA
+        # restarts unlike state.last_changed which resets every boot.
+        # Only applies to entities that are NOT disabled and NOT on
+        # platforms that are naturally unavailable.
+        is_unavailable = False
+        if (
+            not reasons
+            and entry.disabled_by is None
+            and platform not in self._SKIP_UNAVAILABLE_PLATFORMS
+        ):
+            cur_state = self.hass.states.get(entity_id)
+            if cur_state and cur_state.state == "unavailable":
+                # Prefer registry modified_at (survives restart) over
+                # state.last_changed (resets on boot)
+                modified_at = getattr(entry, "modified_at", None)
+                created_at  = getattr(entry, "created_at", None)
+                ref_dt = modified_at or created_at
+                if ref_dt:
+                    age_h = (dt_util.utcnow() - ref_dt).total_seconds() / 3600
+                    age_d = int(age_h / 24)
+                    if age_d >= 1:  # at least 1 full day
+                        is_unavailable = True
+                        reasons.append(f"Unavailable for {age_d} day{'s' if age_d != 1 else ''}")
+                        risk = RISK_MEDIUM
+                        last_changed_dt = ref_dt
 
-        # Tier 2: HA in-memory state.last_changed — always present for active entities
-        if last_changed is None:
-            _state = self.hass.states.get(entity_id)
-            if _state is not None and _state.last_changed:
-                last_changed = _state.last_changed
-
-        # Tier 3: entity registry created_at (HA 2024.4+) — worst case, at least shows age
-        if last_changed is None and hasattr(entry, "created_at") and entry.created_at:
-            last_changed = entry.created_at
-
+        # ── Method 4: stale recorder (last VALID state is old) ───────
+        # Key fix vs old code: we use last_valid (non-unavailable writes)
+        # not last_any — so an entity spamming "unavailable" every 30s
+        # is correctly flagged instead of looking "fresh".
         stale = False
-        if last_changed:
-            age_days = (dt_util.utcnow() - last_changed).days
-            if age_days >= self.stale_days:
-                stale = True
-                reasons.append(f"No state change in {age_days} days")
-        elif not is_orphaned:
-            # Truly no data from any source
-            state = self.hass.states.get(entity_id)
-            if state is None:
-                reasons.append("Entity has no state (never seen)")
-            else:
-                if state.state in ("unavailable", "unknown"):
-                    reasons.append(f"Entity is permanently {state.state}")
+        if not reasons or (is_unavailable and not last_changed_dt):
+            rec = history_map.get(entity_id)  # dict with last_any / last_valid
+            if rec:
+                last_valid = rec.get("last_valid")
+                last_any   = rec.get("last_any")
+                # Use last_valid for stale check; fall back to last_any for display
+                check_dt = last_valid or last_any
+                if last_valid:
+                    age_days = (dt_util.utcnow() - last_valid).days
+                    if age_days >= self.stale_days:
+                        stale = True
+                        reasons.append(f"No real state change in {age_days} days")
+                        risk = RISK_LOW
+                last_changed_dt = last_changed_dt or last_valid or last_any
 
+        # ── Tier-2/3 fallback for display datetime ────────────────────
+        if last_changed_dt is None:
+            _s = self.hass.states.get(entity_id)
+            if _s and _s.last_changed:
+                last_changed_dt = _s.last_changed
+        if last_changed_dt is None:
+            created_at = getattr(entry, "created_at", None)
+            if created_at:
+                last_changed_dt = created_at
+
+        # ── No reason found → entity is healthy, skip ─────────────────
         if not reasons:
             return None
 
-        # Check suspicious naming
+        # ── Suspicious naming check ───────────────────────────────────
         name_lower = (entry.name or entry.original_name or entity_id).lower()
         for pattern in SUSPICIOUS_PATTERNS:
             if pattern in name_lower:
-                reasons.append(f"Suspicious name pattern: '{pattern}'")
+                reasons.append(f"Suspicious name: '{pattern}'")
                 break
 
-        # Check references: YAML files + runtime states
+        # ── References: YAML + runtime ────────────────────────────────
         used_in = self._enrich_runtime_usage(entity_id, list(references.get(entity_id, [])))
 
-        # Adjust risk level
-        if is_orphaned and not used_in:
+        # ── Final risk level ──────────────────────────────────────────
+        if orphaned_ts or is_dead_entry:
+            risk = RISK_LOW
+        elif is_unavailable and used_in:
+            risk = RISK_HIGH    # broken but still referenced
+        elif is_unavailable and not used_in:
+            risk = RISK_MEDIUM
+        elif stale and not used_in:
             risk = RISK_LOW
         elif stale and used_in:
             risk = RISK_MEDIUM
-        elif stale and not used_in:
-            risk = RISK_LOW if not is_orphaned else RISK_LOW
-        else:
-            risk = RISK_MEDIUM
 
-        # Check if defined in YAML (cannot be deleted via API)
+        # ── YAML detection ────────────────────────────────────────────
         is_yaml = entry.platform in ("template", "group", "command_line") or entry.config_entry_id is None
-
-        # Get name
         display_name = entry.name or entry.original_name or entity_id
 
         return ScanResult(
@@ -257,9 +324,9 @@ class DataScanner:
             reason=reasons,
             domain=domain,
             device_class=device_class,
-            last_changed=last_changed,
+            last_changed=last_changed_dt,
             used_in=used_in,
-            platform=entry.platform,
+            platform=platform,
             config_entry_id=entry.config_entry_id,
             is_yaml_entity=is_yaml,
             disabled=entry.disabled,
@@ -295,15 +362,6 @@ class DataScanner:
                 else:
                     reasons.append("Never been triggered")
                     risk = RISK_LOW
-
-                # ── Fallback last_dt for display (3-tier, same as entity scan) ──
-                # Tier 1: last_triggered (already set above if available)
-                # Tier 2: in-memory state.last_changed (HA always tracks this)
-                if last_dt is None and state.last_changed:
-                    last_dt = state.last_changed
-                # Tier 3: recorder history for this automation entity
-                if last_dt is None:
-                    last_dt = history_map.get(entity_id)
 
                 # Suspicious names
                 for pattern in SUSPICIOUS_PATTERNS:
@@ -344,8 +402,6 @@ class DataScanner:
         try:
             scripts = self.hass.states.async_all("script")
             ent_reg = er.async_get(self.hass)
-            # Load recorder history for scripts (same tier-1 source as entity scan)
-            history_map = await self._get_history_map_for_domain("script")
             for state in scripts:
                 entity_id = state.entity_id
                 reasons = []
@@ -367,15 +423,6 @@ class DataScanner:
                         pass
                 else:
                     reasons.append("Script has never been run")
-
-                # ── Fallback last_dt for display (3-tier, same as entity scan) ──
-                # Tier 1: last_triggered (already set above if available)
-                # Tier 2: in-memory state.last_changed (HA always tracks this)
-                if last_dt is None and state.last_changed:
-                    last_dt = state.last_changed
-                # Tier 3: recorder history for this script entity
-                if last_dt is None:
-                    last_dt = history_map.get(entity_id)
 
                 for pattern in SUSPICIOUS_PATTERNS:
                     if pattern in name_lower:
@@ -490,32 +537,51 @@ class DataScanner:
     async def _get_history_map_for_domain(self, domain: str) -> dict[str, datetime]:
         return await self.hass.async_add_executor_job(self._query_history_domain, domain)
 
-    def _query_history_all(self) -> dict[str, datetime]:
-        """Query recorder DB for last state change per entity."""
+    def _query_history_all(self) -> dict[str, dict]:
+        """Query recorder DB for per-entity state history.
+
+        Inspired by Orphan Entity Cleaner: distinguish between
+        - last_any   : last time ANY state was written (incl. unavailable)
+        - last_valid : last time a real (non-unavailable/unknown) state was written
+
+        An entity whose last_valid is old but last_any is recent is one that
+        keeps reporting unavailable — it must still be flagged, not skipped.
+        """
         result = {}
         try:
             from homeassistant.components.recorder import get_instance
-            from homeassistant.components.recorder.db_schema import States
+            from sqlalchemy import text
 
             instance = get_instance(self.hass)
             with instance.get_session() as session:
-                # Efficient: get max last_updated per entity
-                from sqlalchemy import func, text
                 rows = session.execute(
                     text(
-                        "SELECT entity_id, MAX(last_updated_ts) as last_ts "
+                        "SELECT entity_id, "
+                        "  MAX(last_updated_ts) AS last_any_ts, "
+                        "  MAX(CASE WHEN state NOT IN "
+                        "    ('unavailable','unknown','none','') "
+                        "    THEN last_updated_ts END) AS last_valid_ts "
                         "FROM states "
                         "GROUP BY entity_id"
                     )
                 ).fetchall()
                 for row in rows:
                     try:
-                        entity_id = row[0]
-                        ts = row[1]
-                        if ts:
-                            result[entity_id] = datetime.utcfromtimestamp(float(ts)).replace(
-                                tzinfo=dt_util.UTC
-                            )
+                        entity_id   = row[0]
+                        last_any_ts   = row[1]
+                        last_valid_ts = row[2]
+                        if last_any_ts:
+                            result[entity_id] = {
+                                "last_any": datetime.utcfromtimestamp(
+                                    float(last_any_ts)
+                                ).replace(tzinfo=dt_util.UTC),
+                                "last_valid": (
+                                    datetime.utcfromtimestamp(
+                                        float(last_valid_ts)
+                                    ).replace(tzinfo=dt_util.UTC)
+                                    if last_valid_ts else None
+                                ),
+                            }
                     except (ValueError, TypeError):
                         pass
         except Exception as exc:

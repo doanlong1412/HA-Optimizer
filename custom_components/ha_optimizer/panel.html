@@ -1191,7 +1191,7 @@
             <th onclick="sortBy('category')" data-i18n="thCategory">Loại</th>
             <th onclick="sortBy('risk_level')" data-i18n="thRisk">Mức độ rủi ro</th>
             <th data-i18n="thReason">${t("thReason")}</th>
-            <th onclick="sortBy('last_changed')" data-i18n="thLastChanged" title="Hover vào giá trị để xem ngày giờ đầy đủ">Lần thay đổi cuối ↕</th>
+            <th onclick="sortBy('last_changed')" data-i18n="thLastChanged">Lần thay đổi cuối</th>
             <th data-i18n="thUsedIn">Sử dụng trong</th>
             <th data-i18n="thSource">Nguồn</th>
           </tr>
@@ -1547,7 +1547,7 @@ window.addEventListener('load', async () => {
   _updateConnStatus();
   await loadLastResults();
   _restoreAllTabCaches();
-  _fetchSysBarOnly(); // load sysbar in background
+  _startSysbarLoop(); // load sysbar + keep refreshing every 10s on all tabs
 });
 
 // (Token management removed — authentication handled by HA hass object)
@@ -1945,34 +1945,6 @@ function _navBtn(onclickExpr, title) {
 }
 
 /**
- * Format an ISO timestamp as a human-readable age string.
- * Inspired by Orphan Entity Cleaner's age_hours display — always shows
- * a concrete number so the user never sees "No data yet" when data exists.
- *
- * Returns HTML string (may include a tooltip with the full date).
- */
-function formatAge(isoStr) {
-  if (!isoStr) return `<span style="color:var(--text-muted);font-size:0.78rem">—</span>`;
-  const date = new Date(isoStr);
-  if (isNaN(date.getTime())) return `<span style="color:var(--text-muted);font-size:0.78rem">—</span>`;
-
-  const diffMs   = Date.now() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHrs  = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  let label;
-  if (diffMins < 60)        label = `${diffMins}m ago`;
-  else if (diffHrs < 24)    label = `${diffHrs}h ago`;
-  else if (diffDays < 30)   label = `${diffDays}d ago`;
-  else if (diffDays < 365)  label = `${Math.floor(diffDays / 30)}mo ago`;
-  else                      label = `${Math.floor(diffDays / 365)}y ago`;
-
-  const fullDate = date.toLocaleString();
-  return `<span title="${fullDate}" style="cursor:default; white-space:nowrap">${label}</span>`;
-}
-
-/**
  * Build clickable used_in list with links to automations/scripts/yaml files
  */
 function buildUsedInLinks(usedIn) {
@@ -2040,7 +2012,7 @@ function renderTable() {
     const riskClass = `risk-${r.risk_level}`;
     const riskLabel = r.risk_level === 'low' ? `🟢 ${t('filterLow').replace('🟢 ','')}` : r.risk_level === 'medium' ? `🟡 ${t('filterMedium').replace('🟡 ','')}` : `🔴 ${t('filterHigh').replace('🔴 ','')}`;
     const catLabel = { entity: '⚡ Entity', helper: '🔧 Helper', automation: '🤖 Auto', script: '📜 Script' }[r.category] || r.category;
-    const lastChanged = formatAge(r.last_changed);
+    const lastChanged = r.last_changed ? new Date(r.last_changed).toLocaleDateString() : t('noData');
 
     // Build clickable "used_in" links
     const usedInHtml = buildUsedInLinks(r.used_in);
@@ -2265,12 +2237,13 @@ function updateSoftDeleteCount(delta) {
 // SOFT DELETE TAB
 // ================================================================
 function switchTab(name) {
-  // Stop addon realtime when leaving
+  // Pause sysbar realtime when leaving addon tab, resume when entering
   if (name !== 'addon' && _addonRealtimeOn) {
     _addonRealtimeOn = false;
     if (_addonRealtimeTimer) { clearTimeout(_addonRealtimeTimer); _addonRealtimeTimer = null; }
-    const btn = document.getElementById('btnAddonRealtime');
-    if (btn) { btn.innerHTML = '⏱ Auto'; btn.style.borderColor = ''; }
+  }
+  if (name === 'addon' && !_addonRealtimeOn) {
+    _addonRealtimeOn = true; // re-arm before loadAddonTab calls _addonRealtimeTick
   }
   ['scan','recorder','dashboard','storms','deadcode','health','fingerprint','addon','soft'].forEach(t => {
     const el = document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1));
@@ -8556,7 +8529,10 @@ function _patchAddonStats(addons) {
 }
 
 // ── Full load ────────────────────────────────────────────────────
-// Fetch only sysbar data (used on page load for all tabs)
+// ── Sysbar global realtime loop (always runs, all tabs) ──────────
+let _sysbarTimer = null;
+const SYSBAR_INTERVAL = 10000; // refresh every 10 s
+
 async function _fetchSysBarOnly() {
   try {
     const raw  = await callService('ha_optimizer', 'analyze_addons', {});
@@ -8564,13 +8540,31 @@ async function _fetchSysBarOnly() {
     if (data && !data.error) {
       _lastAddonData = data;
       _renderSysBar(data.host || {});
+      // Update clock on sysbar
       const ts = document.getElementById('addonLastRefresh');
       if (ts) ts.textContent = '🕐 ' + new Date().toLocaleTimeString();
+      // If we're also on the addon tab, patch live addon rows too
+      const addonTabVisible = document.getElementById('tabAddon') &&
+        document.getElementById('tabAddon').style.display !== 'none';
+      if (addonTabVisible) _patchAddonStats(data.addons || []);
     }
   } catch(e) {
-    // Silently fail on non-addon tabs — just log
     console.debug('[SysBar] fetch failed:', e.message);
   }
+}
+
+// Start the always-on sysbar loop (called once at page load)
+function _startSysbarLoop() {
+  const _tick = async () => {
+    // Skip if addon tab is active — its own 5s realtime loop handles updates
+    const addonTabVisible = document.getElementById('tabAddon') &&
+      document.getElementById('tabAddon').style.display !== 'none';
+    if (!addonTabVisible) {
+      await _fetchSysBarOnly();
+    }
+    _sysbarTimer = setTimeout(_tick, SYSBAR_INTERVAL);
+  };
+  _tick(); // fire immediately on load regardless of tab
 }
 
 async function loadAddonTab() {
