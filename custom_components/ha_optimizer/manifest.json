@@ -1,7 +1,7 @@
 {
   "domain": "ha_optimizer",
   "name": "HA Optimizer",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Smart cleanup tool for Home Assistant - scan, analyze and purge unused entities, automations, scripts and helpers.",
   "documentation": "https://github.com/doanlong1412/ha-optimizer",
   "issue_tracker": "https://github.com/doanlong1412/ha-optimizer/issues",
